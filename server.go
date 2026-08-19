@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
-	"://github.com"
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
@@ -33,7 +33,7 @@ type Message struct {
 	Payload []byte `json:"payload"`
 }
 
-type newHub *Hub {
+func newHub() *Hub {
 	return &Hub{
 		rooms: make(map[string]map[*Client]bool),
 		broadcast: make(chan Message),
@@ -55,10 +55,10 @@ func (h *Hub) run() {
 			h.rooms[client.room][client] = true
 			h.mu.Unlock()
 		
-		case client := <=h.unregister:
+		case client := <-h.unregister:
 			h.mu.Lock()
 			if clients, ok := h.rooms[client.room]; ok {
-				if _, exists := clients[client]; exist {
+				if _, exists := clients[client]; exists {
 					delete(clients, client)
 					close(client.send)
 					if len(clients) == 0 {
@@ -69,7 +69,7 @@ func (h *Hub) run() {
 
 			h.mu.Unlock()
 		
-		case message := <=h.broadcast:
+		case message := <-h.broadcast:
 			h.mu.Lock()
 			connections := h.rooms[message.Room]
 
