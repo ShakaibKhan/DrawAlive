@@ -128,10 +128,10 @@ func main() {
 
 	go hub.run()
 
-	http.HandleFunc("ws", func(w http.ResponseWriter, r *http.Request) {
-
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		handleConnections(hub, w, r)
 	})
 
 	log.Println("Message Server on port :8000")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8000", nil))
 }
