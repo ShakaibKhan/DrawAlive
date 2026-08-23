@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
@@ -67,7 +68,7 @@ func newHub() *Hub {
 		register: make(chan *Client),
 		unregister: make(chan *Client),
 	}
-	go h.cleanupRoutine()
+	go newHub.cleanupRoutine()
 	return newHub
 }
 
@@ -77,18 +78,35 @@ func (h *Hub) cleanupRoutine() {
 		h.mu.Lock()
 		now := time.Now()
 
+		var expiredRooms []string
 		for name, room := range h.rooms {
 			if now.After(room.ExpiresAt) {
-				log.Printf("Room '%s' expired and was deleted.", name)
-
-				for client := range room.Clients {
-					close(client.send)
-					client.conn.Close()
-				}
-				delete(h.rooms, name)
+				expiredRooms = append(expiredRooms, name)
 			}
 		}
+
 		h.mu.Unlock()
+
+		for _, name := range expiredRooms {
+			h.mu.Lock()
+			room := h.rooms[name]
+			if room == nil {
+				h.mu.Unlock()
+				continue
+			}
+
+			delete(h.rooms, name)
+			h.mu.Unlock()
+
+			room.mu.Lock()
+			log.Printf("Room '%s' expired and was deleted.", name)
+
+			for client := range room.Clients {
+				close(client.send)
+				client.conn.Close()
+			}
+			room.mu.Unlock()
+		}
 	}
 }
 
@@ -118,6 +136,7 @@ func (h *Hub) run() {
 
 			room.Clients[client] = true
 			historyCopy := make([]string, len(room.History))
+			copy(historyCopy, room.History)
 			room.mu.Unlock()
 			h.mu.Unlock()
 
@@ -131,37 +150,43 @@ func (h *Hub) run() {
 				room.mu.Unlock()
 				close(client.send)
 			}
+			h.mu.Unlock()
 		
 		case message := <-h.messages:
 			h.mu.Lock()
-			room := h.rooms[msg.Room]
+			room := h.rooms[message.Room]
 			h.mu.Unlock()
 
 			if room == nil {
 				continue
 			}
 
-			if msg.Type == "draw" {
+			if message.Type == "draw" {
 				room.mu.Lock()
-				room.History = append(room.History, string(msg.Payload))
+				room.History = append(room.History, string(message.Payload))
 
+				var clientsToRemove []*Client
 				for client := range room.Clients {
 					select {
-					case client.send <- h.buildServerMsg("draw_update", msg.Room, msg.Payload):
+					case client.send <- h.buildServerMsg("draw_update", message.Room, message.Payload):
 					default:
-						close(client.send)
-						delete(room.Clients, client)
+						clientsToRemove = append(clientsToRemove, client)
 					}
 				}
 
-				room.Mu.Unlock()
+				for _, client := range clientsToRemove {
+					close(client.send)
+					delete(room.Clients, client)
+				}
+
+				room.mu.Unlock()
 			}
 		}
 	}
 }
 
 func (h *Hub) buildServerMsg(msgType, room string, payload interface{}) []byte {
-	msg: = ServerMessage{Type: msgType, Room: room, Payload: payload}
+	msg := ServerMessage{Type: msgType, Room: room, Payload: payload}
 	b, _ := json.Marshal(msg)
 	return b
 }
@@ -181,12 +206,12 @@ func (h *Hub) handleListRooms(client *Client) {
 	}
 	h.mu.Unlock()
 
-	client.send <- h.buildServerMsg("room_list", map[string]interface{}{"rooms": rooms})
+	client.send <- h.buildServerMsg("room_list", "", map[string]interface{}{"rooms": rooms})
 }
 
 func (h* Hub) handleCreateRoom(client *Client, msg ClientMessage) {
 	if msg.Room == "" || msg.Capacity <= 0 {
-		client.send <- h.buildServerMsg("error", map[string]string{"message": "Invalid room name or capacity"})
+		client.send <- h.buildServerMsg("error", "", map[string]string{"message": "Invalid room name or capacity"})
 		return
 	}
 

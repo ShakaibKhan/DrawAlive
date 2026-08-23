@@ -15,28 +15,41 @@ interface DrawPayload {
     lineWidth: number;
 }
 
+interface RoomInfo {
+    name: string;
+    users: number;
+    maxCapacity: number;
+    expiresIn: string
+}
+
 export default function CollaborativeCanvas() {
     
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const contextRef = useRef<CanvasRenderingContext2D | null>(null);
     const isDrawingRef = useRef<boolean>(false);
     const lastCoordinatesRef = useRef<{x: number; y: number} | null>(null);
+    const lastEmitTimeRef = useRef<number>(0);
 
-    const [roomID, setRoomId] = useState<string>('lobby');
-    const [roomInput, setRoomInput] = useState<string>('');
+    const [currentRoom, setCurrentRoom] = useState<string>('lobby');
+    const [availableRooms, setAvailableRooms] = useState<RoomInfo[]>([]);
+
+    const [newRoomName, setNewRoomName] = useState<string>('');
+    const [newRoomCapacity, setNewRoomCapacity] = useState<number>(10);
     const [brushColour, setBrushColour] = useState<string>('#000000');
     const [brushWidth, setBrushWidth] = useState<number>(5);
 
-    const socketURL = `ws://localhost:8000/ws?room=${roomID}`;
+    const socketURL = `ws://localhost:8000/ws`;
     const { sendMessage, lastMessage, readyState } = useWebSocket(socketURL, {
         shouldReconnect: () => true,
         reconnectAttempts: 10,
         reconnectInterval: 3000,
+        onOpen: () => {
+            sendMessage(JSON.stringify({type: 'get_rooms'}));
+        }
     });
 
     useEffect(() => {
         const canvas = canvasRef.current;
-
         if (!canvas) return;
 
         canvas.width = 800;
@@ -53,21 +66,54 @@ export default function CollaborativeCanvas() {
     useEffect(() => {
         if (lastMessage !== null && contextRef.current) {
             try {
-                const data: DrawPayload = JSON.parse(lastMessage.data);
-
+                const data = JSON.parse(lastMessage.data);
                 const cntx = contextRef.current;
-                cntx.beginPath();
-                cntx.strokeStyle = data.color;
-                cntx.lineWidth = data.lineWidth;
-                cntx.moveTo(data.prevX, data.prevY);
-                cntx.lineTo(data.currentX, data.currentY);
-                cntx.stroke();
-                cntx.closePath();
+                const canvas = canvasRef.current;
+
+                switch (data.type) {
+                    case 'room_list':
+                        setAvailableRooms(data.payload.rooms || []);
+                        break;
+                    case 'room_state':
+                        setCurrentRoom(data.room);
+
+                        cntx.clearRect(0, 0, canvas!.width, canvas!.height);
+                        if (data.payload.history) {
+                            data.payload.history.forEach((actionStr: string) => {
+                                const action: DrawPayload = JSON.parse(actionStr);
+                                cntx.beginPath()
+                                cntx.strokeStyle = action.color;
+                                cntx.lineWidth = action.lineWidth;
+                                cntx.moveTo(action.prevX, action.prevY);
+                                cntx.lineTo(action.currentX, action.currentY);
+                                cntx.stroke();
+                                cntx.closePath();
+                            });
+                        }
+                        sendMessage(JSON.stringify({type: "get_rooms"}));
+                        break;
+                    case 'draw_update':
+                        const drawData: DrawPayload = data.payload;
+                        cntx.beginPath();
+                        cntx.strokeStyle = drawData.color;
+                        cntx.lineWidth = drawData.lineWidth;
+                        cntx.moveTo(drawData.prevX, drawData.prevY);
+                        cntx.lineTo(drawData.currentX, drawData.currentY);
+                        cntx.stroke();
+                        cntx.closePath();
+                        break;
+                    case 'error':
+                    case 'room_full':
+                        alert(`Server: ${data.payload.message || 'Room is full'}`);
+                        setCurrentRoom('lobby');
+                        break;
+                } 
+
             } catch (errr) {
-                console.error('Error with draw payload: ', errr);
+                console.error('Error parsing WS message: ', errr);
             }
         }
-    }, [lastMessage]);
+    }, [lastMessage, sendMessage]);
 
     const getCoordinates = (ev: MouseEvent<HTMLCanvasElement>) => {
         const canvas = canvasRef.current;
@@ -81,9 +127,9 @@ export default function CollaborativeCanvas() {
     };
 
     const startDrawing = (ev: MouseEvent<HTMLCanvasElement>) => {
+        if (currentRoom === 'lobby') return alert('Join or create a room first');
         const coords = getCoordinates(ev);
         if (!coords) return;
-
         isDrawingRef.current = true;
         lastCoordinatesRef.current = coords;
     };
@@ -93,7 +139,6 @@ export default function CollaborativeCanvas() {
         lastCoordinatesRef.current = null;
     };
 
-    const lastEmitTimeRef = useRef<number>(0);
 
     const draw = (ev: MouseEvent<HTMLCanvasElement>) => {
         if (!isDrawingRef.current || !contextRef.current || !lastCoordinatesRef.current) return;
@@ -122,75 +167,209 @@ export default function CollaborativeCanvas() {
             cntx.closePath();
 
             // send to websocket 
-            sendMessage(JSON.stringify(payload));
+            sendMessage(JSON.stringify({
+                type: 'draw',
+                room: currentRoom,
+                payload: payload
+            }));
 
             lastCoordinatesRef.current = coords;
             lastEmitTimeRef.current = now;
         }
     };
 
-    const handleRoomSwitch = (ev: React.FormEvent) => {
+    const handleCreateRoom = (ev: React.SubmitEvent<HTMLFormElement>) => {
         ev.preventDefault();
-        if (roomInput.trim()) {
+        if (!newRoomName.trim()) return;
+        sendMessage(JSON.stringify({
+            type: 'create_room',
+            room: newRoomName.trim().toLowerCase(),
+            capacity: newRoomCapacity <= 50 ? newRoomCapacity:50,
+        }));
+    }
+
+    const handleRoomSwitch = (ev: React.SubmitEvent<HTMLFormElement>) => {
+        ev.preventDefault();
+        const form = ev.currentTarget;
+        const input = form.elements.namedItem('roomInput') as HTMLInputElement;
+
+        if (input && input.value.trim()) {
             if (contextRef.current && canvasRef.current) {
-                contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                contextRef.current.clearRect(0, 0, canvasRef.current.width,  canvasRef.current.height);
             }
-            setRoomId(roomInput.trim().toLowerCase());
+
+            setCurrentRoom(input.value.trim().toLocaleLowerCase());
+            sendMessage(JSON.stringify({type: 'join_room', room: input.value.trim().toLocaleLowerCase() }));
+            input.value = '';
         }
     };
 
+    const isFull = (room: RoomInfo) => room.users >= room.maxCapacity;
+
     return (
-        <div style = {{padding: '20px', fontFamily: 'sans-serif', maxWidth: '850px', margin: '0 auto'}}>
+        <div style = {{padding: '20px', fontFamily: 'sans-serif', maxWidth: '900px', margin: '0 auto'}}>
             <h2>DRAWALIVE</h2>
-            <div style={{display: 'flex', gap: '20px', marginBottom: '15px', alignItems: 'center', background: '#111111', padding: '12px', borderRadius: '6px' }}>
-                <form onSubmit={handleRoomSwitch} style={{ display: 'flex', gap: '6px'}}>
-                    <input 
-                        type="text"
-                        placeholder="Room Name... "
-                        value={roomInput}
-                        onChange={(ev) => setRoomInput(ev.target.value)} 
+
+            {/* status bar*/}
+
+            <div style={{display: 'flex', gap: '20px', marginBottom: '15px', alignItems: 'center', background: '#111', padding: '12px', borderRadius: '6px', color: '#fff' }}>
+                <div>
+                    Status: {readyState === 1 ? <span style={{ color: '#4caf50' }}>● Connected</span> : <span style={{ color: '#f44336' }}>○ Offline</span>}
+                </div>
+                <div style={{marginLeft: 'auto'}}>
+                    Current Room: <strong style={{color: '#0070f3'}}>{currentRoom == "lobby" ? 'Lobby': currentRoom}</strong>
+                </div>
+            </div>
+
+            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px'}}>
+                {/*CreateRoom*/}
+                <div style = {{background: '#f5f5f5', padding: '15px', borderRadius: '6px'}}>
+                    <h4 style={{marginTop: 0}}>Create New Room</h4>
+                    <form onSubmit={handleCreateRoom} style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                        <input
+                            type='text'
+                            placeholder="Room Name (e.g., art room)" 
+                            value={newRoomName}
+                            onChange={(ev) => setNewRoomName(ev.target.value)}
+                            style={{padding: '8px', borderRadius: '4px', border: '1px solid #ccc'}}
+                        />
+                        <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                            <label style={{fontSize: '14px'}}>Max Capacity: </label>
+                           <input
+                            type='number'
+                            min="2"
+                            max='50'
+                            value={newRoomCapacity}
+                            onChange={(ev) => setNewRoomCapacity(Number(ev.target.value))}
+                            style={{width: '60px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc'}}
+                           />
+                            <button type='submit' style={{padding: '8px 16px', cursor: 'pointer', background: '#0070f3', color: 'white', border: 'none', borderRadius: '4px', marginLeft: 'auto'}}>
+                                Create & Join
+                            </button>
+                        </div> 
+                    </form>
+                </div>
+
+                {/* Join Room feature*/}
+                <div style={{background: '#f5f5f5', padding: '15px', borderRadius: '6px'}}>
+                    <h4 style={{marginTop: 0}}>Join Existing Room</h4>
+                    <form onSubmit={handleRoomSwitch} style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                        <input
+                            name="roomInput"
+                            type='text'
+                            placeholder="Enter Room Name"
+                            style={{padding: '8px', borderRadius: '4px', border: '1px solid #ccc'}}
+                        />
+                        <button type='submit' style={{padding: '8px 16px', cursor: 'pointer', background: '#4caf50', color: 'white', border: 'none', borderRadius: '4px'}}>
+                            Join Room
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div style={{marginBottom: '20px'}}>
+                <h4>Available Rooms</h4>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: '10px'}}>
+                    {availableRooms.length === 0 ? (
+                        <p style={{color: '#666'}}>No rooms are available. Create one instead!</p>
+                    ) : (
+                        availableRooms.map((room) => (
+                            <div key={room.name} style={{
+                                background: isFull(room)? '#ffebee': '#e3f2fd',
+                                padding: '10px 15px',
+                                borderRadius: '6px',
+                                border: `1px sold ${isFull(room) ? '#ffcdd2': '#bbdefb'}`,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '5px',
+                                minWidth: '150px'
+                            }}>
+                                <div style={{fontWeight: 'bold', textTransform: 'capitalize'}}>{room.name}</div>
+                                <div style={{fontSize: '12px', color:'#555'}}>
+                                    {room.users} / {room.maxCapacity} users
+                                </div>
+                                <div style={{fontSize: '12px', color: '#888'}}>
+                                    Expires in: {room.expiresIn}
+                                </div>
+
+                                <button
+                                    onClick={() => {
+                                        if (contextRef.current && canvasRef.current) {
+                                            contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+                                        }
+                                        setCurrentRoom(room.name)
+                                        sendMessage(JSON.stringify({type: 'join_room', room: room.name}));
+                                    }}
+                                    disabled={isFull(room)}
+                                    style={{
+                                        padding: '6px 12px',
+                                        cursor: isFull(room) ? 'not-allowed' : 'pointer',
+                                        background: isFull(room) ? '#ccc' : '#0070f3',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        marginTop: '5px'
+                                    }}
+                                >
+                                    {isFull(room) ? 'Full' : 'Join'}
+                                </button>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>  
+
+            {/* Canvas and brush*/} 
+
+            <div style={{display: 'flex', flexDirection: 'column', gap: '15px', alignItems: 'center'}}>
+                    <div style={{display:'flex', gap: '20px', alignItems: 'center', background: '#f5f5f5', padding: '10px 20px', borderRadius: '6px', flexWrap: 'wrap'}}>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                            <label>Color: </label>
+                            <input
+                                type="color"
+                                value={brushColour}
+                                onChange={(ev) => setBrushColour(ev.target.value)}
+                                style={{cursor: 'pointer', border: 'none', width: '40px', height:'30px'}}
+                            />
+                        </div>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                            <label>Width:</label>
+                            <input
+                                type="range"
+                                min="1"
+                                max="50"
+                                value={brushWidth}
+                                onChange={(ev) => setBrushWidth(Number(ev.target.value))}
+                            />
+                            <span style={{minWidth: '30px'}}>{brushWidth}</span>
+                        </div>
+                        <button
+                                onClick={() => {
+                                    if (contextRef.current && canvasRef.current) {
+                                        contextRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+                                    }
+                                }}
+                                style={{padding: '6px 12px', cursor: 'point', background: '#f44336', color: 'white', border: 'none', borderRadius: '4px', marginLeft: 'auto'}}
+                        >
+                            Clear Canvas
+                        </button>
+                    </div>
+
+                    <canvas
+                        ref={canvasRef}
+                        onMouseDown={startDrawing}
+                        onMouseUp={stopDrawing}
+                        onMouseLeave={stopDrawing}
+                        onMouseMove={draw}
+                        style={{
+                            border: '2px solid #333',
+                            borderRadius: '4px',
+                            cursor: currentRoom === 'lobby' ? 'not-allowed' : 'crosshair',
+                            background: '#fff',
+                            touchAction: 'none'
+                        }}
                     />
-                    <button type="submit" style={{padding: '6px 12px', cursor: 'pointer'}}>Join Room</button>
-                </form>
-
-                <div style={{fontSize: '14px'}}>
-                    Active Rooms: <strong style={{color: '#0070f3'}}>{roomID}</strong>
-                </div>
-
-                <div style ={{ marginLeft: 'auto', fontSize: '13px'}}>
-                    Status: {readyState === 1 ? <span style={{color: 'green'}}>● Connected</span>: <span style={{color:'red'}}>○ Offline</span>}
-                </div>
             </div>
-
-            <div style={{display: 'flex', gap: '15px', marginBottom: '15px', alignItems: 'center'}}>
-                <label>
-                    Color:{' '}
-                    <input type="color" value={brushColour} onChange={(ev) => setBrushColour(ev.target.value)} style={{cursor: 'pointer'}}/>
-                </label>
-
-                <label>
-                    Size: {brushWidth}px{' '}
-                    <input type="range" min="1" max="20" value={brushWidth} onChange={(ev) => setBrushWidth(Number(ev.target.value))}/>
-                </label>
-            </div>
-
-            <canvas
-                ref={canvasRef}
-                onMouseDown={startDrawing}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
-                onMouseMove={draw}
-                style={
-                    {
-                        border: '2px solid #333',
-                        borderRadius: '4px',
-                        backgroundColor: '#ffffff',
-                        cursor: 'crosshair',
-                        display: 'block',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-                    }
-                }
-            />
         </div>
     );
 }
