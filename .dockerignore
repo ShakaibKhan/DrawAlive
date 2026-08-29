@@ -1,0 +1,44 @@
+# flyctl launch added from .gitignore
+# Dependencies
+**/node_modules
+
+# Build output
+**/dist
+**/dist-ssr
+
+# Logs and local env
+**/*.log
+**/*.local
+
+# OS / editor
+**/.DS_Store
+**/.idea
+**/.vscode/*
+!**/.vscode/extensions.json
+
+# flyctl launch added from draw-app-frontend/.gitignore
+# Logs
+draw-app-frontend/**/logs
+draw-app-frontend/**/*.log
+draw-app-frontend/**/npm-debug.log*
+draw-app-frontend/**/yarn-debug.log*
+draw-app-frontend/**/yarn-error.log*
+draw-app-frontend/**/pnpm-debug.log*
+draw-app-frontend/**/lerna-debug.log*
+
+draw-app-frontend/**/node_modules
+draw-app-frontend/**/dist
+draw-app-frontend/**/dist-ssr
+draw-app-frontend/**/*.local
+
+# Editor directories and files
+draw-app-frontend/**/.vscode/*
+!draw-app-frontend/**/.vscode/extensions.json
+draw-app-frontend/**/.idea
+draw-app-frontend/**/.DS_Store
+draw-app-frontend/**/*.suo
+draw-app-frontend/**/*.ntvs*
+draw-app-frontend/**/*.njsproj
+draw-app-frontend/**/*.sln
+draw-app-frontend/**/*.sw?
+fly.toml

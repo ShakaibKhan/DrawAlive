@@ -38,7 +38,7 @@ export default function CollaborativeCanvas() {
     const [brushColour, setBrushColour] = useState<string>('#000000');
     const [brushWidth, setBrushWidth] = useState<number>(5);
 
-    const socketURL = `ws://localhost:8000/ws`;
+    const socketURL = import.meta.env.VITE_WEBSOCKET_SERVER;
     const { sendMessage, lastMessage, readyState } = useWebSocket(socketURL, {
         shouldReconnect: () => true,
         reconnectAttempts: 10,
@@ -180,12 +180,17 @@ export default function CollaborativeCanvas() {
 
     const handleCreateRoom = (ev: React.SubmitEvent<HTMLFormElement>) => {
         ev.preventDefault();
-        if (!newRoomName.trim()) return;
+        const roomName = newRoomName.trim().toLowerCase();
+        if (!roomName) return;
+
         sendMessage(JSON.stringify({
             type: 'create_room',
-            room: newRoomName.trim().toLowerCase(),
+            room: roomName,
             capacity: newRoomCapacity <= 50 ? newRoomCapacity:50,
         }));
+
+        setCurrentRoom(roomName);
+        setNewRoomName('');
     }
 
     const handleRoomSwitch = (ev: React.SubmitEvent<HTMLFormElement>) => {
@@ -194,12 +199,14 @@ export default function CollaborativeCanvas() {
         const input = form.elements.namedItem('roomInput') as HTMLInputElement;
 
         if (input && input.value.trim()) {
+            const roomName = input.value.trim().toLowerCase();
+
             if (contextRef.current && canvasRef.current) {
                 contextRef.current.clearRect(0, 0, canvasRef.current.width,  canvasRef.current.height);
             }
 
-            setCurrentRoom(input.value.trim().toLocaleLowerCase());
-            sendMessage(JSON.stringify({type: 'join_room', room: input.value.trim().toLocaleLowerCase() }));
+            setCurrentRoom(roomName);
+            sendMessage(JSON.stringify({type: 'join_room', room: roomName }));
             input.value = '';
         }
     };

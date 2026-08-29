@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
+	"os"
 	"github.com/gorilla/websocket"
 )
 
@@ -286,6 +286,10 @@ func handleConnections(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	hub := newHub()
 
 	go hub.run()
@@ -294,6 +298,6 @@ func main() {
 		handleConnections(hub, w, r)
 	})
 
-	log.Println("Message Server on port :8000")
-	log.Fatal(http.ListenAndServe(":8000", nil))
+	log.Println("Message Server on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
