@@ -39,6 +39,8 @@ export default function CollaborativeCanvas() {
     const [brushWidth, setBrushWidth] = useState<number>(5);
 
     const socketURL = import.meta.env.VITE_WEBSOCKET_SERVER;
+    console.log(socketURL);
+
     const { sendMessage, lastMessage, readyState } = useWebSocket(socketURL, {
         shouldReconnect: () => true,
         reconnectAttempts: 10,

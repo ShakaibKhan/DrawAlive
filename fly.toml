@@ -1,15 +1,12 @@
-# fly.toml app configuration file generated for drawalive-aged-orchard-8851 on 2026-08-28T20:33:04-04:00
+# fly.toml app configuration file generated for drawalive-divine-glade-379 on 2026-08-28T20:36:57-04:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'drawalive-aged-orchard-8851'
+app = 'drawalive-divine-glade-379'
 primary_region = 'iad'
 
 [build]
-  [build.args]
-    GO_VERSION = '1.16'
-
 [env]
   PORT = '8080'
 
